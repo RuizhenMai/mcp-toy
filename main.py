@@ -13,6 +13,15 @@ logging.basicConfig(
 
 logger = logging.getLogger("calculator-mcp")
 
+env = os.getenv("APP_ENV", "local")
+
+if env == "railway":
+    host = "0.0.0.0"
+    port = int(os.environ["PORT"])
+else:
+    host = "127.0.0.1"
+    port = 8000
+
 
 # -------------------------
 # MCP SERVER
@@ -172,6 +181,6 @@ if __name__ == "__main__":
 
     mcp.run(
         transport="http",
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8000)),
+        host=host,
+        port=port
     )
