@@ -1,5 +1,6 @@
 import logging
 from fastmcp import FastMCP
+import os
 
 # -------------------------
 # LOGGING
