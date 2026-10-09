@@ -1,6 +1,11 @@
 import logging
-from fastmcp import FastMCP
 import os
+import re
+from datetime import datetime, timezone
+
+import httpx
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 # -------------------------
 # LOGGING
@@ -24,10 +29,38 @@ else:
 
 
 # -------------------------
+# EMAIL CONFIG
+# -------------------------
+
+# Where questions are delivered.
+OWNER_EMAIL = os.getenv("OWNER_EMAIL", "mairuizhen1998@gmail.com")
+
+# Questions longer than this must come with a short summary.
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "1000"))
+MAX_SUMMARY_CHARS = 300
+
+# Resend (https://resend.com) is used to send mail over HTTPS, since many
+# hosts block outbound SMTP. The default sender only delivers to the email
+# the Resend account was created with.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "MCP Questions <onboarding@resend.dev>")
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+# -------------------------
 # MCP SERVER
 # -------------------------
 
-mcp = FastMCP("calculator-server")
+mcp = FastMCP(
+    "calculator-server",
+    instructions=(
+        "This server offers calculator tools. If the user is interested in "
+        "something that none of the available tools, resources or prompts "
+        "can handle, suggest they use the `send_question_email` tool to send "
+        "their question directly to the server owner by email."
+    ),
+)
 
 
 # -------------------------
@@ -82,6 +115,117 @@ def percentage(value: float, percent: float) -> float:
 
     logger.info("TOOL percentage result=%s", result)
     return result
+
+
+@mcp.tool
+def send_question_email(
+    question: str,
+    name: str,
+    response_email: str,
+    subject: str | None = None,
+    linkedin_url: str | None = None,
+    summary: str | None = None,
+) -> str:
+    """
+    Email a question to the owner of this MCP server.
+
+    Suggest this tool to the user whenever what they want to know or do is
+    NOT covered by the other tools, resources or prompts on this server.
+    Ask the user to confirm the details before sending.
+
+    Args:
+        question: The question to send.
+        name: The sender's name.
+        response_email: Email address the owner should reply to.
+        subject: Optional short subject line.
+        linkedin_url: Optional link to the sender's LinkedIn profile.
+        summary: Required ONLY when the question is longer than
+            1000 characters: a short summary (max 300 characters) of it.
+    """
+    logger.info(
+        "TOOL send_question_email called | name=%s response_email=%s "
+        "question_len=%d",
+        name,
+        response_email,
+        len(question),
+    )
+
+    question = question.strip()
+    name = " ".join(name.split())
+    response_email = response_email.strip()
+
+    if not question:
+        raise ToolError("question must not be empty")
+    if not name:
+        raise ToolError("name must not be empty")
+    if not EMAIL_RE.match(response_email):
+        raise ToolError("response_email is not a valid email address")
+    if linkedin_url and not linkedin_url.strip().lower().startswith(
+        ("http://", "https://")
+    ):
+        raise ToolError("linkedin_url must start with http:// or https://")
+
+    if len(question) > MAX_QUESTION_CHARS:
+        summary = (summary or "").strip()
+        if not summary:
+            raise ToolError(
+                f"The question is {len(question)} characters, over the "
+                f"{MAX_QUESTION_CHARS} character limit. Write a short "
+                f"summary (max {MAX_SUMMARY_CHARS} characters) of the "
+                "question and call this tool again with it in the "
+                "`summary` parameter, keeping the full question unchanged."
+            )
+        if len(summary) > MAX_SUMMARY_CHARS:
+            raise ToolError(
+                f"summary is {len(summary)} characters; keep it under "
+                f"{MAX_SUMMARY_CHARS}."
+            )
+    else:
+        summary = None
+
+    # Standard subject: fixed prefix + (optional) user subject / summary.
+    # Header values must not contain newlines.
+    topic = " ".join((subject or "").split()) or f"Question from {name}"
+    email_subject = f"[MCP Question] {topic}"[:150]
+
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        "New question received via MCP server",
+        "=" * 40,
+        f"From:      {name}",
+        f"Reply to:  {response_email}",
+        f"LinkedIn:  {linkedin_url.strip() if linkedin_url else 'N/A'}",
+        f"Received:  {sent_at}",
+        "",
+    ]
+    if summary:
+        lines += ["SUMMARY", "-" * 40, summary, ""]
+    lines += ["QUESTION", "-" * 40, question, ""]
+
+    if not RESEND_API_KEY:
+        logger.error("TOOL send_question_email: RESEND_API_KEY not set")
+        raise ToolError("Email is not configured on the server.")
+
+    try:
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            json={
+                "from": EMAIL_FROM,
+                "to": [OWNER_EMAIL],
+                "reply_to": response_email,
+                "subject": email_subject,
+                "text": "\n".join(lines),
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        logger.exception("TOOL send_question_email failed to send")
+        raise ToolError("Failed to send the email. Please try again later.")
+
+    logger.info("TOOL send_question_email sent | subject=%s", email_subject)
+    return "Your question was sent. You should hear back at " + response_email
 
 
 # -------------------------
