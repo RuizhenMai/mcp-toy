@@ -18,7 +18,7 @@ logging.basicConfig(
 
 logger = logging.getLogger("calculator-mcp")
 
-env = os.getenv("APP_ENV", "railway")
+env = os.getenv("APP_ENV", "local")
 
 if env == "railway":
     host = "0.0.0.0"
