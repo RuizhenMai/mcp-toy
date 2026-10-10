@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 
 import httpx
+import db
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
@@ -322,6 +323,9 @@ Show both values clearly.
 
 if __name__ == "__main__":
     logger.info("Starting calculator MCP server")
+
+    db.init_db()
+    logger.info("Database ready at %s", db.DB_PATH)
 
     mcp.run(
         transport="http",
