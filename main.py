@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 import db
+import oauth
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
@@ -53,8 +54,11 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # MCP SERVER
 # -------------------------
 
+auth = oauth.build_auth()
+
 mcp = FastMCP(
     "calculator-server",
+    auth=auth,
     instructions=(
         "This server offers calculator tools. If the user is interested in "
         "something that none of the available tools, resources or prompts "
@@ -151,6 +155,10 @@ def send_question_email(
         len(question),
     )
 
+    # With Google sign-in enabled every request is already authenticated; this
+    # is the verified identity that billing will attach to.
+    user = oauth.current_user() if auth else None
+
     question = question.strip()
     name = " ".join(name.split())
     response_email = response_email.strip()
@@ -197,6 +205,7 @@ def send_question_email(
         f"Reply to:  {response_email}",
         f"LinkedIn:  {linkedin_url.strip() if linkedin_url else 'N/A'}",
         f"Received:  {sent_at}",
+        f"Signed in: {user.email or user.sub} (Google)" if user else "Signed in: no",
         "",
     ]
     if summary:
